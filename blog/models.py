@@ -1,9 +1,41 @@
 from django.db import models
 from django.urls import reverse
 from django.contrib.auth.models import User
+from django.db.models import Count
+
+
+
+class TagQuerySet(models.QuerySet):
+
+    def popular(self):
+        populat_sorted_posts = self.annotate(Count('posts')).order_by("-posts__count")
+        return populat_sorted_posts
+
+class PostQuerySet(models.QuerySet):
+    #Post.objects.popular().prefetch_related('author').fetch_with_comments_count()[:5]
+    def popular(self):
+        return self.annotate(likes_count=Count('likes')).prefetch_related('author').order_by('-likes_count')
+
+    def fetch_with_comments_count(self):
+        '''Функция fetch_with_comments_count хороша тем, что она не накладывает второй annotate на Querie Set, а создает новый и
+        складывает оба с помощью id постов'''
+        most_popular_posts = self
+        most_popular_posts_ids = [post.id for post in most_popular_posts]
+
+        posts_with_comments = Post.objects.filter(id__in=most_popular_posts_ids).annotate(
+            comments_count=Count('comments'))
+        ids_and_comments = posts_with_comments.values_list('id', 'comments_count')
+        count_for_id = dict(ids_and_comments)
+        for post in most_popular_posts:
+            post.comments_count = count_for_id[post.id]
+        print(post.comments_count)
+
+        return most_popular_posts
 
 
 class Post(models.Model):
+    objects = PostQuerySet.as_manager()
+
     title = models.CharField('Заголовок', max_length=200)
     text = models.TextField('Текст')
     slug = models.SlugField('Название в виде url', max_length=200)
@@ -38,6 +70,8 @@ class Post(models.Model):
 
 
 class Tag(models.Model):
+    objects = TagQuerySet.as_manager()
+
     title = models.CharField('Тег', max_length=20, unique=True)
 
     def __str__(self):
@@ -59,7 +93,9 @@ class Comment(models.Model):
     post = models.ForeignKey(
         'Post',
         on_delete=models.CASCADE,
-        verbose_name='Пост, к которому написан')
+        verbose_name='Пост, к которому написан',
+        related_name='comments'
+    )
     author = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
