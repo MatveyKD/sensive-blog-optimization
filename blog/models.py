@@ -27,7 +27,6 @@ class PostQuerySet(models.QuerySet):
         count_for_id = dict(ids_and_comments)
         for post in most_popular_posts:
             post.comments_count = count_for_id[post.id]
-        print(post.comments_count)
 
         return most_popular_posts
 
