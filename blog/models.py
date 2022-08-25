@@ -1,108 +1,113 @@
-from django.shortcuts import render
-from blog.models import Comment, Post, Tag
+from django.db import models
+from django.urls import reverse
+from django.contrib.auth.models import User
 from django.db.models import Count, Prefetch
 
 
-def serialize_post(post):
-    return {
-        'title': post.title,
-        'teaser_text': post.text[:200],
-        'author': post.author.username,
-        'comments_amount': post.comments_count,
-        'image_url': post.image.url if post.image else None,
-        'published_at': post.published_at,
-        'slug': post.slug,
-        'tags': [serialize_tag(tag) for tag in post.tags.all()],
-        'first_tag_title': post.tags.all()[0].title,
-    }
+
+class TagQuerySet(models.QuerySet):
+
+    def popular(self):
+        popular_sorted_posts = self.annotate(Count('posts')).order_by("-posts__count")
+        return popular_sorted_posts
+
+class PostQuerySet(models.QuerySet):
+    def popular(self):
+        return self.annotate(likes_count=Count('likes')).prefetch_related('author').order_by('-likes_count')
+
+    def fetch_with_comments_count(self):
+        '''Функция fetch_with_comments_count хороша тем, что она не накладывает второй annotate на Querie Set, а создает новый и
+        складывает оба с помощью id постов'''
+        most_popular_posts = self
+        most_popular_posts_ids = [post.id for post in most_popular_posts]
+
+        posts_with_comments = Post.objects.prefetch_related('author').filter(id__in=most_popular_posts_ids).annotate(
+            comments_count=Count('comments'))
+        ids_and_comments = posts_with_comments.values_list('id', 'comments_count')
+        count_for_id = dict(ids_and_comments)
+        for post in most_popular_posts:
+            post.comments_count = count_for_id[post.id]
+
+        return most_popular_posts
+    def fetch_tags_with_posts_count(self):
+        return self.prefetch_related(Prefetch('tags', queryset=Tag.objects.annotate(posts_count=Count("posts"))))
 
 
-def serialize_tag(tag):
-    return {
-        'title': tag.title,
-        'posts_with_tag': tag.posts_count,
-    }
+class Post(models.Model):
+    title = models.CharField('Заголовок', max_length=200)
+    text = models.TextField('Текст')
+    slug = models.SlugField('Название в виде url', max_length=200)
+    image = models.ImageField('Картинка')
+    published_at = models.DateTimeField('Дата и время публикации')
 
-def index(request):
-    most_popular_posts = Post.objects.popular()[:5].fetch_with_comments_count()
+    author = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        verbose_name='Автор',
+        limit_choices_to={'is_staff': True})
+    likes = models.ManyToManyField(
+        User,
+        related_name='liked_posts',
+        verbose_name='Кто лайкнул',
+        blank=True)
+    tags = models.ManyToManyField(
+        'Tag',
+        related_name='posts',
+        verbose_name='Теги')
 
-    most_fresh_posts = Post.objects.order_by('-published_at') \
-                           .prefetch_related('author', Prefetch('tags', queryset=Tag.objects.annotate(posts_count=Count("posts")))) \
-                           .fetch_with_comments_count()[:5]
+    objects = PostQuerySet.as_manager()
 
-    most_popular_tags = Tag.objects.popular().annotate(posts_count = Count("posts"))[:5]
+    class Meta:
+        ordering = ['-published_at']
+        verbose_name = 'пост'
+        verbose_name_plural = 'посты'
 
-    context = {
-        'most_popular_posts': [
-            serialize_post(post) for post in most_popular_posts
-        ],
-        'page_posts': [serialize_post(post) for post in most_fresh_posts],
-        'popular_tags': [serialize_tag(tag) for tag in most_popular_tags],
-    }
-    return render(request, 'index.html', context)
+    def __str__(self):
+        return self.title
 
-
-def post_detail(request, slug):
-    post = Post.objects.popular().get(slug=slug)
-    serialized_comments = []
-    for comment in post.comments.all().prefetch_related('author'):
-        serialized_comments.append({
-            'text': comment.text,
-            'published_at': comment.published_at,
-            'author': comment.author.username,
-        })
-
-    likes = post.likes_count
-
-    related_tags = post.tags.annotate(posts_count = Count("posts"))
-
-    serialized_post = {
-        'title': post.title,
-        'text': post.text,
-        'author': post.author.username,
-        'comments': serialized_comments,
-        'likes_amount': likes,
-        'image_url': post.image.url if post.image else None,
-        'published_at': post.published_at,
-        'slug': post.slug,
-        'tags': [serialize_tag(tag) for tag in related_tags],
-    }
-
-    most_popular_tags = Tag.objects.popular().annotate(posts_count = Count("posts"))[:5]
-
-    most_popular_posts = Post.objects.popular().fetch_with_comments_count()[:5]
-
-    context = {
-        'post': serialized_post,
-        'popular_tags': [serialize_tag(tag) for tag in most_popular_tags],
-        'most_popular_posts': [
-            serialize_post(post) for post in most_popular_posts
-        ],
-    }
-    return render(request, 'post-details.html', context)
+    def get_absolute_url(self):
+        return reverse('post_detail', args={'slug': self.slug})
 
 
-def tag_filter(request, tag_title):
-    tag = Tag.objects.get(title=tag_title)
+class Tag(models.Model):
+    title = models.CharField('Тег', max_length=20, unique=True)
 
-    most_popular_tags = Tag.objects.popular().annotate(posts_count = Count("posts"))[:5]
+    objects = TagQuerySet.as_manager()
 
-    most_popular_posts = Post.objects.popular().fetch_with_comments_count()[:5]
+    class Meta:
+        ordering = ['title']
+        verbose_name = 'тег'
+        verbose_name_plural = 'теги'
 
-    related_posts = tag.posts.popular().fetch_with_comments_count()[:20]
+    def __str__(self):
+        return self.title
 
-    context = {
-        'tag': tag.title,
-        'popular_tags': [serialize_tag(tag) for tag in most_popular_tags],
-        'posts': [serialize_post(post) for post in related_posts],
-        'most_popular_posts': [
-            serialize_post(post) for post in most_popular_posts
-        ],
-    }
-    return render(request, 'posts-list.html', context)
+    def get_absolute_url(self):
+        return reverse('tag_filter', args={'tag_title': self.slug})
+
+    def clean(self):
+        self.title = self.title.lower()
 
 
-def contacts(request):
-    # позже здесь будет код для статистики заходов на эту страницу
-    # и для записи фидбека
-    return render(request, 'contacts.html', {})
+class Comment(models.Model):
+    post = models.ForeignKey(
+        'Post',
+        on_delete=models.CASCADE,
+        verbose_name='Пост, к которому написан',
+        related_name='comments'
+    )
+    author = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        verbose_name='Автор')
+
+    text = models.TextField('Текст комментария')
+    published_at = models.DateTimeField('Дата и время публикации')
+
+    class Meta:
+        ordering = ['published_at']
+        verbose_name = 'комментарий'
+        verbose_name_plural = 'комментарии'
+
+    def __str__(self):
+        return f'{self.author.username} under {self.post.title}'
