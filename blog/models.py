@@ -12,7 +12,6 @@ class TagQuerySet(models.QuerySet):
         return populat_sorted_posts
 
 class PostQuerySet(models.QuerySet):
-    #Post.objects.popular().prefetch_related('author').fetch_with_comments_count()[:5]
     def popular(self):
         return self.annotate(likes_count=Count('likes')).prefetch_related('author', Prefetch('tags', queryset=Tag.objects.annotate(posts_count=Count("posts")))).order_by('-likes_count')
 
@@ -22,7 +21,7 @@ class PostQuerySet(models.QuerySet):
         most_popular_posts = self
         most_popular_posts_ids = [post.id for post in most_popular_posts]
 
-        posts_with_comments = Post.objects.filter(id__in=most_popular_posts_ids).annotate(
+        posts_with_comments = Post.objects.prefetch_related('author').filter(id__in=most_popular_posts_ids).annotate(
             comments_count=Count('comments'))
         ids_and_comments = posts_with_comments.values_list('id', 'comments_count')
         count_for_id = dict(ids_and_comments)
