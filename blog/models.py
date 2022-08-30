@@ -8,8 +8,8 @@ from django.db.models import Count, Prefetch
 class TagQuerySet(models.QuerySet):
 
     def popular(self):
-        popular_sorted_posts = self.annotate(Count('posts')).order_by("-posts__count")
-        return popular_sorted_posts
+        sorted_popular_posts = self.annotate(Count('posts')).order_by("-posts__count")
+        return sorted_popular_posts
 
 class PostQuerySet(models.QuerySet):
     def popular(self):
