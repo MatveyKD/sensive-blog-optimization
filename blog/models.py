@@ -4,33 +4,47 @@ from django.contrib.auth.models import User
 from django.db.models import Count, Prefetch
 
 
-
 class TagQuerySet(models.QuerySet):
 
     def popular(self):
-        sorted_popular_posts = self.annotate(Count('posts')).order_by("-posts__count")
+        sorted_popular_posts = self.annotate(Count('posts')) \
+                    .order_by("-posts__count")
         return sorted_popular_posts
+
 
 class PostQuerySet(models.QuerySet):
     def popular(self):
-        return self.annotate(likes_count=Count('likes')).prefetch_related('author').order_by('-likes_count')
+        return self.annotate(likes_count=Count('likes')) \
+                .prefetch_related('author') \
+                .order_by('-likes_count')
 
     def fetch_with_comments_count(self):
-        '''Функция fetch_with_comments_count хороша тем, что она не накладывает второй annotate на Querie Set, а создает новый и
-        складывает оба с помощью id постов'''
+        '''Функция fetch_with_comments_count хороша тем
+        что она не накладывает второй annotate на Querie Set, а создает новый
+        и складывает оба с помощью id постов'''
         most_popular_posts = self
         most_popular_posts_ids = [post.id for post in most_popular_posts]
 
-        posts_with_comments = Post.objects.prefetch_related('author').filter(id__in=most_popular_posts_ids).annotate(
-            comments_count=Count('comments'))
-        ids_and_comments = posts_with_comments.values_list('id', 'comments_count')
+        posts_with_comments = Post.objects.prefetch_related('author') \
+                                .filter(id__in=most_popular_posts_ids) \
+                                .annotate(comments_count=Count('comments'))
+        ids_and_comments = posts_with_comments.values_list(
+            'id',
+            'comments_count'
+        )
         count_for_id = dict(ids_and_comments)
         for post in most_popular_posts:
             post.comments_count = count_for_id[post.id]
 
         return most_popular_posts
+
     def fetch_tags_with_posts_count(self):
-        return self.prefetch_related(Prefetch('tags', queryset=Tag.objects.annotate(posts_count=Count("posts"))))
+        return self.prefetch_related(
+            Prefetch(
+                'tags',
+                queryset=Tag.objects.annotate(posts_count=Count("posts"))
+            )
+        )
 
 
 class Post(models.Model):
